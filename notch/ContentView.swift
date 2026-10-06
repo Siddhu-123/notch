@@ -748,7 +748,7 @@ struct NotchRootView: View {
                             activityNamespace: activityNamespace
                         )
                         .simultaneousGesture(verticalNotchGesture)
-                        .transition(.opacity)
+                        .transition(reduceMotion ? .opacity : .scale(scale: 0.98, anchor: .top).combined(with: .opacity))
                     }
                 }
             }
@@ -777,7 +777,7 @@ struct NotchRootView: View {
             .offset(y: model.isTucked ? -model.visibleSize.height - 12 : 0)
             .opacity(model.isTucked ? 0 : (reduceMotion ? 1 : 1 - min(abs(gestureTranslation) / 900, 0.08)))
             .tint(model.activeModule == .shelf ? NotchModule.shelf.tint : (model.activeModule == .apps ? NotchModule.apps.tint : (nowPlaying.dynamicAccentColor ?? NotchModule.nowPlaying.tint)))
-            .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.82), value: model.isTucked)
+            .animation(reduceMotion ? nil : (model.isTucked ? NotchMotion.collapse : NotchMotion.expand), value: model.isTucked)
             .animation(
                 reduceMotion ? nil : (
                     model.expansionState == .collapsed
@@ -786,7 +786,7 @@ struct NotchRootView: View {
                 ),
                 value: model.expansionState
             )
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.hud?.id)
+            .animation(reduceMotion ? nil : NotchMotion.expand, value: model.hud?.id)
             .onHover { isInside in
                 if isInside { model.pointerEntered() } else { model.pointerExited() }
             }
@@ -873,18 +873,39 @@ struct CollapsedNotchView: View {
     @ObservedObject private var focus = FocusTimerStore.shared
     @ObservedObject private var agents = AgentMonitor.shared
     @ObservedObject private var preferences = NotchDesignPreferences.shared
+    @ObservedObject private var activities = IslandActivityCenter.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var topActivity: IslandActivity? {
+        guard NotchFeatureRegistry.isEnabled(.islandActivities) else { return nil }
+        return activities.topActivity
+    }
 
     var body: some View {
         Button {
+            if topActivity?.kind == .download,
+               NotchFeatureRegistry.isEnabled(.downloadsPage), model.showToolkit {
+                model.openTool(.downloads)
+                return
+            }
             guard model.interaction.expandsOnClick else { return }
             model.toggleExpanded()
         } label: {
             HStack(spacing: 0) {
                 HStack {
-                    CollapsedMediaBadge(song: nowPlaying.song)
-                    .matchedGeometryEffect(id: "activity-artwork", in: activityNamespace, isSource: true)
-                    .frame(width: 20, height: 20)
-                    .padding(.trailing, 6)
+                    if let topActivity {
+                        Image(systemName: topActivity.symbol)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(topActivity.tint)
+                            .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+                            .frame(width: 20, height: 20)
+                            .padding(.trailing, 6)
+                    } else {
+                        CollapsedMediaBadge(song: nowPlaying.song)
+                            .matchedGeometryEffect(id: "activity-artwork", in: activityNamespace, isSource: true)
+                            .frame(width: 20, height: 20)
+                            .padding(.trailing, 6)
+                    }
                 }
                 .frame(width: model.sizePreset.wingWidth, alignment: .trailing)
 
@@ -892,7 +913,29 @@ struct CollapsedNotchView: View {
                     .frame(width: model.coreNotchWidth)
 
                 HStack {
-                    if focus.isRunning {
+                    if let topActivity {
+                        if topActivity.isFinished {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(topActivity.tint)
+                                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+                                .padding(.leading, 6)
+                        } else if let progress = topActivity.progress {
+                            ProgressView(value: progress)
+                                .progressViewStyle(.circular)
+                                .controlSize(.mini)
+                                .tint(topActivity.tint)
+                                .frame(width: 15, height: 15)
+                                .padding(.leading, 6)
+                        } else {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .controlSize(.mini)
+                                .tint(topActivity.tint)
+                                .frame(width: 15, height: 15)
+                                .padding(.leading, 6)
+                        }
+                    } else if focus.isRunning {
                         Text(focus.formattedRemaining).font(.system(size: 10, weight: .semibold, design: .rounded))
                             .monospacedDigit().foregroundStyle(.mint).padding(.leading, 4)
                     } else if preferences.assistantActivity && agents.activeCount > 0 && !nowPlaying.song.isPlaying {
@@ -921,15 +964,26 @@ struct CollapsedNotchView: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button("Open Now Playing") { model.select(.nowPlaying) }
+            if NotchFeatureRegistry.isEnabled(.downloadsPage) {
+                Button("Open Downloads") { model.openTool(.downloads) }
+                    .help("Open the Downloads page")
+                    .accessibilityIdentifier("collapsed-open-downloads")
+            }
             Button("Open Shelf") { model.select(.shelf) }
             Button("Open Workspace") { model.select(.workspace) }
             Divider()
             Button(model.isPinned ? "Unpin" : "Keep Open") { model.updatePinned(!model.isPinned) }
             Button("Settings…") { SettingsWindowController.shared.show() }
         }
+        .help(topActivity?.kind == .download ? "Open Downloads" : "Open Notch")
         .accessibilityIdentifier("collapsed-notch")
-        .accessibilityLabel(nowPlaying.song.hasTrack ? "Notch, \(nowPlaying.song.title), \(nowPlaying.song.artist)" : "Notch")
+        .accessibilityLabel(notchAccessibilityLabel)
         .accessibilityHint(interactionHint)
+    }
+
+    private var notchAccessibilityLabel: String {
+        if let topActivity { return "Notch, \(topActivity.title), \(topActivity.detail)" }
+        return nowPlaying.song.hasTrack ? "Notch, \(nowPlaying.song.title), \(nowPlaying.song.artist)" : "Notch"
     }
 
     private var interactionHint: String {
@@ -2101,6 +2155,8 @@ struct MinimalLiveActivityView: View {
     @ObservedObject var controls: SystemControlCenter
     let activityNamespace: Namespace.ID
     @ObservedObject private var focus = FocusTimerStore.shared
+    @State private var optimisticPlayback = OptimisticToggle()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var playPauseTint: Color {
         let lower = nowPlaying.song.sourceApp.lowercased()
@@ -2157,18 +2213,28 @@ struct MinimalLiveActivityView: View {
                         .accessibilityLabel("Previous track")
 
                         Button {
+                            optimisticPlayback.requestToggle(currentValue: nowPlaying.song.isPlaying)
                             nowPlaying.playPause()
                         } label: {
-                            Image(systemName: nowPlaying.song.isPlaying ? "pause.fill" : "play.fill")
+                            Image(systemName: optimisticPlayback.displayedValue(for: nowPlaying.song.isPlaying) ? "pause.fill" : "play.fill")
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundStyle(playPauseTint)
-                                .frame(width: 20, height: 20)
+                                .frame(width: 28, height: 28)
                                 .contentShape(Rectangle())
+                                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                         }
                         .buttonStyle(TactileButtonStyle())
-                        .help(nowPlaying.song.isPlaying ? "Pause" : "Play")
+                        .help(optimisticPlayback.displayedValue(for: nowPlaying.song.isPlaying) ? "Pause" : "Play")
                         .accessibilityIdentifier("minimal-playpause")
-                        .accessibilityLabel(nowPlaying.song.isPlaying ? "Pause" : "Play")
+                        .accessibilityLabel(optimisticPlayback.displayedValue(for: nowPlaying.song.isPlaying) ? "Pause" : "Play")
+                        .onChange(of: nowPlaying.song.isPlaying) { _, confirmed in optimisticPlayback.observe(confirmed) }
+                        .task(id: optimisticPlayback.requestedAt) {
+                            guard let requestedAt = optimisticPlayback.requestedAt else { return }
+                            let remaining = max(0, OptimisticToggle.confirmationTimeout - Date.now.timeIntervalSince(requestedAt))
+                            do { try await Task.sleep(for: .seconds(remaining)) }
+                            catch { return }
+                            optimisticPlayback.expire(at: .now)
+                        }
 
                         Button {
                             nowPlaying.nextTrack()
