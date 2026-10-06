@@ -6,4 +6,6 @@ import Foundation
     func currentNowPlaying(with reply: @escaping (Data?) -> Void)
     func sendMediaCommand(_ command: Int, with reply: @escaping (Bool) -> Void)
     func seekMedia(_ seconds: Double, with reply: @escaping (Bool) -> Void)
+    /// Wave 7 generic channel. Request and reply are JSON objects; see HelperRouter.
+    func perform(_ request: Data, with reply: @escaping (Data?) -> Void)
 }

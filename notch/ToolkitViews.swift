@@ -6,19 +6,44 @@ extension Notification.Name {
 }
 
 enum NotchToolkitPage: String, CaseIterable, Identifiable {
-    case notes, awake
+    // Ordered by expected use: quick capture and notes first, rare upkeep last.
+    case notes, capture, tools, downloads, convert, maintenance, awake
     var id: String { rawValue }
     var title: String {
         switch self {
         case .notes: return "Scratchpad"
+        case .capture: return "Capture"
+        case .tools: return "Tools"
+        case .downloads: return "Downloads"
+        case .convert: return "Convert"
+        case .maintenance: return "Maintenance"
         case .awake: return "Keep Awake"
         }
     }
     var symbol: String {
         switch self {
         case .notes: return "square.and.pencil"
+        case .capture: return "camera.viewfinder"
+        case .tools: return "square.grid.2x2.fill"
+        case .downloads: return "arrow.down.circle.fill"
+        case .convert: return "arrow.triangle.2.circlepath"
+        case .maintenance: return "wrench.and.screwdriver.fill"
         case .awake: return "cup.and.saucer.fill"
         }
+    }
+    /// The feature switch that hides this page, if any.
+    var feature: NotchFeature? {
+        switch self {
+        case .capture: return .capture
+        case .tools: return .quickToggles
+        case .downloads: return .downloadsPage
+        case .convert: return .mediaTools
+        case .maintenance: return .maintenance
+        case .notes, .awake: return nil
+        }
+    }
+    static var visible: [NotchToolkitPage] {
+        allCases.filter { $0 != .awake && ($0.feature.map { NotchFeatureRegistry.isEnabled($0) } ?? true) }
     }
 }
 
@@ -29,9 +54,15 @@ struct NotchToolkitView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            pageStrip
             Group {
                 switch page {
                 case .notes: scratchpad
+                case .capture: CaptureToolView()
+                case .tools: QuickToolsView()
+                case .downloads: DownloadsToolView()
+                case .convert: MediaToolsView()
+                case .maintenance: MaintenanceToolView()
                 case .awake: keepAwake
                 }
             }
@@ -40,6 +71,27 @@ struct NotchToolkitView: View {
         .foregroundStyle(.white)
         .onAppear { store.enabled = true }
         .accessibilityIdentifier("toolkit-\(page.rawValue)-panel")
+    }
+
+    /// One row of large page buttons so every tool is one click from any other.
+    private var pageStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(NotchToolkitPage.visible) { item in
+                    Button { NotchModel.shared.openTool(item) } label: {
+                        Label(item.title, systemImage: item.symbol)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .padding(.horizontal, 10)
+                            .frame(minHeight: 28)
+                            .background(.white.opacity(item == page ? 0.16 : 0.05), in: Capsule())
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(item == page ? 1 : 0.7))
+                    .accessibilityIdentifier("toolkit-page-\(item.rawValue)")
+                }
+            }
+        }
     }
 
     private var scratchpad: some View {

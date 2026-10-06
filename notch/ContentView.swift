@@ -120,6 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !isTesting {
             agentEdgeController = AgentEdgeController()
             agentEdgeController?.start()
+            NotchFeatureRegistry.startEnabled()
         }
 
         let hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
@@ -1085,7 +1086,7 @@ struct IntegratedExpandedNotchView: View {
     }
 
     private var leftRail: [NotchRailItem] {
-        [moduleKey(.nowPlaying, title: "Now Playing", symbol: "music.note"),
+        [moduleKey(.nowPlaying, title: "Music", symbol: "music.note"),
          model.showShelf ? moduleKey(.shelf, symbol: "tray.fill") : blankKey("module-shelf"),
          moduleKey(.apps)]
     }
@@ -1112,8 +1113,8 @@ struct IntegratedExpandedNotchView: View {
             })
         }
         items.append(model.showToolkit
-            ? NotchRailItem(id: "rail-notes", symbol: NotchToolkitPage.notes.symbol, title: NotchToolkitPage.notes.title,
-                            isSelected: model.activeModule == .toolkit) { model.openTool(.notes) }
+            ? NotchRailItem(id: "rail-notes", symbol: NotchToolkitPage.tools.symbol, title: "Tools",
+                            isSelected: model.activeModule == .toolkit) { model.openTool(model.toolkitPage) }
             : blankKey("rail-notes"))
         return items
     }
@@ -1257,7 +1258,7 @@ struct PrimaryNotchTabs: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            tab(title: "Home", symbol: "house.fill", selected: ![NotchModule.shelf, .apps, .workspace, .toolkit].contains(model.activeModule)) {
+            tab(title: "Music", symbol: "music.note", selected: ![NotchModule.shelf, .apps, .workspace, .toolkit].contains(model.activeModule)) {
                 model.select(.nowPlaying)
             }
             .accessibilityIdentifier("module-nowPlaying")
@@ -2286,6 +2287,7 @@ struct SettingsView: View {
     private enum SettingsTab: Hashable {
         case general
         case integrations
+        case features
         case agents
         case about
     }
@@ -2447,6 +2449,14 @@ struct SettingsView: View {
                 Label("Integrations", systemImage: "rectangle.3.group")
                     .accessibilityIdentifier("settings-integrations-tab")
             }
+
+            NotchFeatureSettingsView()
+                .accessibilityIdentifier("settings-features")
+                .tag(SettingsTab.features)
+                .tabItem {
+                    Label("Features", systemImage: "switch.2")
+                        .accessibilityIdentifier("settings-features-tab")
+                }
 
             AgentSettingsView()
                 .accessibilityIdentifier("settings-agents")

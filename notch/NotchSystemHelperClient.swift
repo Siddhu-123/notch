@@ -35,6 +35,8 @@ private final class OnceCompletion<Value> {
     func currentNowPlaying(with reply: @escaping (Data?) -> Void)
     func sendMediaCommand(_ command: Int, with reply: @escaping (Bool) -> Void)
     func seekMedia(_ seconds: Double, with reply: @escaping (Bool) -> Void)
+    /// Wave 7 generic channel. Request and reply are JSON objects; see HelperRouter.
+    func perform(_ request: Data, with reply: @escaping (Data?) -> Void)
 }
 
 /// Keeps private display access outside the sandboxed UI process.
@@ -98,6 +100,35 @@ final class NotchSystemHelperClient {
     func seekMedia(to seconds: Double) {
         guard let proxy = proxy(onError: { _ in }) else { return }
         proxy.seekMedia(seconds) { _ in }
+    }
+
+    /// Wave 7 generic helper call. `group` and `action` match a handler in
+    /// NotchSystemHelper/Handlers. Replies nil on timeout, transport error or bad JSON.
+    func perform(
+        _ group: String,
+        _ action: String,
+        args: [String: Any] = [:],
+        timeout: TimeInterval = 2,
+        completion: @escaping ([String: Any]?) -> Void = { _ in }
+    ) {
+        let once = OnceCompletion(completion)
+        once.scheduleTimeout(after: timeout) { once.call(nil) }
+        let request: [String: Any] = ["group": group, "action": action, "args": args]
+        guard JSONSerialization.isValidJSONObject(request),
+              let data = try? JSONSerialization.data(withJSONObject: request),
+              let proxy = proxy(onError: { _ in once.call(nil) }) else {
+            once.call(nil)
+            return
+        }
+        proxy.perform(data) { reply in
+            once.call(reply.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+        }
+    }
+
+    func perform(_ group: String, _ action: String, args: [String: Any] = [:], timeout: TimeInterval = 2) async -> [String: Any]? {
+        await withCheckedContinuation { continuation in
+            perform(group, action, args: args, timeout: timeout) { continuation.resume(returning: $0) }
+        }
     }
 
     private func proxy(

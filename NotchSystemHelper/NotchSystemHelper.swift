@@ -71,6 +71,10 @@ final class NotchSystemHelper: NSObject, NotchSystemHelperProtocol {
         MediaRemoteBridge.shared.run(arguments: ["seek", String(microseconds)], reply: reply)
     }
 
+    @objc func perform(_ request: Data, with reply: @escaping (Data?) -> Void) {
+        HelperRouter.handle(request, reply: reply)
+    }
+
     private func service(for displayID: CGDirectDisplayID) -> io_service_t? {
         let expectedVendor = CGDisplayVendorNumber(displayID)
         let expectedModel = CGDisplayModelNumber(displayID)

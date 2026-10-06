@@ -27,7 +27,7 @@ enum NotchModule: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .nowPlaying: return "Now Playing"
+        case .nowPlaying: return "Music"
         case .shelf: return "Shelf"
         case .apps: return "Apps"
         case .calendar: return "Calendar"

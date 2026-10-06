@@ -1,0 +1,11 @@
+import Foundation
+
+/// J7 keys (Super key, central shortcuts). Owned by that job; runs outside the app sandbox.
+enum KeysHelperHandler: HelperHandler {
+    static func handle(action: String, args: HelperArgs, reply: @escaping (HelperArgs?) -> Void) {
+        switch action {
+        case "ping": reply(["ok": true])
+        default: reply(HelperRouter.unknown(action))
+        }
+    }
+}
