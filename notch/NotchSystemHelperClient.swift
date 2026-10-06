@@ -46,6 +46,10 @@ final class NotchSystemHelperClient {
     private let serviceName = "sidco.notch.SystemHelper"
     private let lock = NSLock()
     private var connection: NSXPCConnection?
+    private var hadConnection = false
+    /// Posted on the main queue when the helper had to be relaunched, so features
+    /// that keep state in the helper (event taps) can send their config again.
+    static let helperRestarted = Notification.Name("notch.helper.restarted")
 
     private init() {}
 
@@ -158,6 +162,10 @@ final class NotchSystemHelperClient {
         }
         newConnection.resume()
         connection = newConnection
+        if hadConnection {
+            DispatchQueue.main.async { NotificationCenter.default.post(name: Self.helperRestarted, object: nil) }
+        }
+        hadConnection = true
         return newConnection
     }
 

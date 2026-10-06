@@ -142,7 +142,17 @@ enum NotchFeatureRegistry {
         for feature in NotchFeature.allCases where isEnabled(feature) {
             NotchFeatureLifecycle.apply(feature, enabled: true)
         }
+        guard restartObserver == nil else { return }
+        restartObserver = NotificationCenter.default.addObserver(
+            forName: NotchSystemHelperClient.helperRestarted, object: nil, queue: .main
+        ) { _ in
+            for feature in NotchFeature.allCases where feature.permission != nil && isEnabled(feature) {
+                NotchFeatureLifecycle.apply(feature, enabled: true)
+            }
+        }
     }
+
+    private static var restartObserver: NSObjectProtocol?
 }
 
 /// Routes enable/disable to the job that owns the feature.
