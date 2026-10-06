@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import Combine
+import CoreAudio
 import SwiftUI
 
 struct IntegratedMusicView: View {
@@ -8,6 +9,9 @@ struct IntegratedMusicView: View {
     let availableHeight: CGFloat
     let activityNamespace: Namespace.ID
     let hapticsEnabled: Bool
+    @ObservedObject private var controls = SystemControlCenter.shared
+    @AppStorage(NotchFeature.upNext.defaultsKey) private var upNextEnabled = NotchFeature.upNext.defaultEnabled
+    @AppStorage(NotchFeature.lyrics.defaultsKey) private var lyricsEnabled = NotchFeature.lyrics.defaultEnabled
     @State private var playerLaunchError: String?
     @State private var isSeeking = false
     @State private var seekValue = 0.0
@@ -15,6 +19,14 @@ struct IntegratedMusicView: View {
     @State private var trackSwipeThresholdReached = false
     @State private var hapticTrigger = 0
     @StateObject private var sources = Phase6MediaSourceStore()
+    @State private var pageVisible = false
+    @State private var upcomingTracks: [MusicUpcomingTrack] = []
+    @State private var isLoadingUpcoming = false
+    @State private var upcomingTask: Task<Void, Never>?
+    @State private var lyricsVisible = false
+    @State private var lyricsContent: MusicLyrics?
+    @State private var isLoadingLyrics = false
+    @State private var lyricsTask: Task<Void, Never>?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -41,7 +53,12 @@ struct IntegratedMusicView: View {
     }
 
     @ViewBuilder private var singlePlayer: some View {
-        let artSize = min(max(availableHeight - 4, 92), 172)
+        let showUpcoming = upNextEnabled && nowPlaying.song.hasTrack && nowPlaying.song.sourceApp == "Music"
+            && (isLoadingUpcoming || !upcomingTracks.isEmpty)
+        let showLyrics = lyricsEnabled && lyricsVisible && nowPlaying.song.hasTrack
+        let extraHeight: CGFloat = (showUpcoming ? 50 : 0) + (showLyrics ? 74 : 0) + (showUpcoming || showLyrics ? 12 : 4)
+        let artSize = min(max(availableHeight - extraHeight, 64), 172)
+        VStack(alignment: .leading, spacing: 5) {
         HStack(alignment: .top, spacing: 12) {
             ZStack(alignment: trackSwipe < 0 ? .bottomTrailing : .bottomLeading) {
                 ArtworkView(
@@ -76,6 +93,7 @@ struct IntegratedMusicView: View {
             .help(nowPlaying.song.hasTrack ? "Click to open \(nowPlaying.song.sourceApp.isEmpty ? "player" : nowPlaying.song.sourceApp)" : "Album artwork")
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Album artwork")
+            .accessibilityIdentifier("music-album-artwork")
             .accessibilityActions {
                 if nowPlaying.song.hasTrack {
                     Button("Previous Track") { nowPlaying.previousTrack() }
@@ -102,9 +120,31 @@ struct IntegratedMusicView: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    .frame(minHeight: 28)
+                    .contentShape(Rectangle())
                     .help("Open \(nowPlaying.song.sourceApp.isEmpty ? "player" : nowPlaying.song.sourceApp)")
+                    .accessibilityIdentifier("music-source-open")
 
                     Phase6MediaSourceChips(store: sources)
+                    outputPicker
+                    if lyricsEnabled {
+                        Button {
+                            lyricsVisible.toggle()
+                        } label: {
+                            Label(lyricsVisible ? "Lyrics On" : "Lyrics", systemImage: "quote.bubble")
+                                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                                .lineLimit(1)
+                                .frame(minHeight: 28)
+                                .padding(.horizontal, 7)
+                                .background(lyricsVisible ? .white.opacity(0.14) : .white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.white.opacity(lyricsVisible ? 0.95 : 0.65))
+                        .disabled(!nowPlaying.song.hasTrack)
+                        .help(lyricsVisible ? "Hide lyrics." : "Show lyrics for this track.")
+                        .accessibilityIdentifier("music-lyrics-toggle")
+                    }
                     Spacer(minLength: 2)
                     MiniVisualizer(isPlaying: nowPlaying.song.isPlaying)
                         .matchedGeometryEffect(id: "activity-spectrum", in: activityNamespace, isSource: false)
@@ -132,7 +172,10 @@ struct IntegratedMusicView: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .frame(minHeight: 28)
+                .contentShape(Rectangle())
                 .help("Open \(nowPlaying.song.sourceApp.isEmpty ? "player" : nowPlaying.song.sourceApp)")
+                .accessibilityIdentifier("music-track-details")
 
                 Spacer(minLength: 5)
 
@@ -153,6 +196,8 @@ struct IntegratedMusicView: View {
                     .controlSize(.mini)
                     .tint(nowPlaying.dynamicAccentColor ?? .white)
                     .disabled(!nowPlaying.song.hasTrack)
+                    .help("Seek in the current track.")
+                    .accessibilityIdentifier("music-playback-position")
                 }
                 .frame(height: 13)
 
@@ -212,7 +257,272 @@ struct IntegratedMusicView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: artSize, alignment: .leading)
         }
+        if showUpcoming {
+            upcomingStrip
+        }
+        if showLyrics {
+            lyricsPanel
+        }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            pageVisible = true
+            refreshUpcoming()
+            if lyricsVisible { loadLyrics() }
+        }
+        .onDisappear {
+            pageVisible = false
+            upcomingTask?.cancel()
+            upcomingTask = nil
+            lyricsTask?.cancel()
+            lyricsTask = nil
+        }
+        .onChange(of: nowPlaying.song.id) { _, _ in
+            refreshUpcoming()
+            if lyricsVisible { loadLyrics() }
+        }
+        .onChange(of: nowPlaying.song.sourceApp) { _, _ in
+            refreshUpcoming()
+            if lyricsVisible { loadLyrics() }
+        }
+        .onChange(of: upNextEnabled) { _, enabled in
+            if enabled { refreshUpcoming() }
+            else {
+                upcomingTask?.cancel()
+                upcomingTracks = []
+                isLoadingUpcoming = false
+            }
+        }
+        .onChange(of: lyricsEnabled) { _, enabled in
+            if enabled && lyricsVisible { loadLyrics() }
+            if !enabled {
+                lyricsVisible = false
+                lyricsTask?.cancel()
+                lyricsContent = nil
+                isLoadingLyrics = false
+            }
+        }
+        .onChange(of: lyricsVisible) { _, visible in
+            if visible { loadLyrics() }
+            else {
+                lyricsTask?.cancel()
+                lyricsContent = nil
+                isLoadingLyrics = false
+            }
+        }
         .accessibilityIdentifier("home-panel")
+    }
+
+    private var outputPicker: some View {
+        Menu {
+            ForEach(controls.outputDevices) { device in
+                Button {
+                    controls.selectOutputDevice(device)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: device.symbol)
+                        Text(device.name).lineLimit(1)
+                        Spacer(minLength: 8)
+                        if device.id == controls.currentOutputDeviceID {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+                .help("Switch audio output to \(device.name).")
+                .accessibilityIdentifier("music-output-option-\(device.id)")
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: controls.currentOutputDevice?.symbol ?? "speaker.wave.2")
+                Text(controls.isSwitchingOutput ? "Switching…" : (controls.currentOutputDevice?.name ?? "Sound output"))
+                    .lineLimit(1)
+            }
+            .font(.system(size: 9, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.72))
+            .frame(maxWidth: 148, minHeight: 28, alignment: .leading)
+            .padding(.horizontal, 7)
+            .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
+        .disabled(controls.isSwitchingOutput || controls.outputDevices.isEmpty)
+        .help(controls.isSwitchingOutput ? "Switching audio output…" : "Choose the audio output device.")
+        .accessibilityLabel("Audio output: \(controls.currentOutputDevice?.name ?? "unavailable")")
+        .accessibilityIdentifier("music-output-picker")
+    }
+
+    private var upcomingStrip: some View {
+        HStack(spacing: 6) {
+            Text(isLoadingUpcoming ? "UP NEXT · …" : "UP NEXT")
+                .font(.system(size: 8, weight: .bold, design: .rounded))
+                .tracking(0.6)
+                .foregroundStyle(.white.opacity(0.42))
+                .frame(width: 54, alignment: .leading)
+            if upcomingTracks.isEmpty && isLoadingUpcoming {
+                Text("Reading playlist…")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.5))
+                Spacer(minLength: 0)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(upcomingTracks) { track in
+                            Button {
+                                MusicExtrasService.playUpcoming(trackIndex: track.index)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Group {
+                                        if let cover = MusicExtrasCache.cover(for: track.coverCacheKey) {
+                                            Image(nsImage: cover).resizable().scaledToFill()
+                                        } else {
+                                            Image(systemName: "music.note")
+                                                .font(.system(size: 13, weight: .medium))
+                                                .foregroundStyle(.white.opacity(0.6))
+                                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                                .background(.white.opacity(0.07))
+                                        }
+                                    }
+                                    .frame(width: 36, height: 36)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(track.title)
+                                            .font(.system(size: 9, weight: .semibold, design: .rounded))
+                                            .lineLimit(1)
+                                        Text(track.artist)
+                                            .font(.system(size: 8, weight: .medium))
+                                            .foregroundStyle(.white.opacity(0.52))
+                                            .lineLimit(1)
+                                    }
+                                    .frame(width: 94, alignment: .leading)
+                                }
+                                .padding(4)
+                                .frame(minHeight: 44)
+                                .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("Play \(track.title) by \(track.artist).")
+                            .accessibilityIdentifier("music-up-next-\(track.index)")
+                        }
+                    }
+                }
+            }
+        }
+        .frame(height: 48)
+        .accessibilityIdentifier("music-up-next-strip")
+    }
+
+    @ViewBuilder private var lyricsPanel: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("LYRICS")
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                    .tracking(0.6)
+                    .foregroundStyle(.white.opacity(0.42))
+                Spacer()
+                if isLoadingLyrics {
+                    ProgressView().controlSize(.mini).tint(.white.opacity(0.7))
+                }
+            }
+            if let lyricsContent, !lyricsContent.timedLines.isEmpty {
+                TimelineView(.animation(minimumInterval: 0.25, paused: !nowPlaying.song.isPlaying)) { timeline in
+                    let activeIndex = LyricsParser.currentLineIndex(
+                        in: lyricsContent.timedLines,
+                        at: nowPlaying.estimatedElapsed(at: timeline.date)
+                    )
+                    ScrollViewReader { proxy in
+                        ScrollView(.vertical, showsIndicators: true) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                ForEach(Array(lyricsContent.timedLines.enumerated()), id: \.offset) { index, line in
+                                    Text(line.text)
+                                        .font(.system(size: index == activeIndex ? 11 : 10, weight: index == activeIndex ? .bold : .medium, design: .rounded))
+                                        .foregroundStyle(index == activeIndex ? .white : .white.opacity(0.5))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .id(index)
+                                }
+                            }
+                        }
+                        .frame(height: 54)
+                        .onAppear {
+                            if let activeIndex { proxy.scrollTo(activeIndex, anchor: .center) }
+                        }
+                        .onChange(of: activeIndex) { _, index in
+                            if let index { withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(index, anchor: .center) } }
+                        }
+                    }
+                }
+            } else if let lyricsContent, !lyricsContent.plainText.isEmpty {
+                ScrollView(.vertical, showsIndicators: true) {
+                    Text(lyricsContent.plainText)
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.82))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .frame(height: 54)
+            } else {
+                Text(isLoadingLyrics ? "Finding lyrics…" : "Lyrics aren’t available for this track.")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.52))
+                    .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+            }
+        }
+        .padding(7)
+        .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityIdentifier("music-lyrics-panel")
+    }
+
+    private func refreshUpcoming() {
+        upcomingTask?.cancel()
+        guard pageVisible, upNextEnabled,
+              nowPlaying.song.hasTrack, nowPlaying.song.sourceApp == "Music" else {
+            upcomingTracks = []
+            isLoadingUpcoming = false
+            return
+        }
+
+        let trackID = nowPlaying.song.id
+        let title = nowPlaying.song.title
+        let artist = nowPlaying.song.artist
+        isLoadingUpcoming = true
+        upcomingTask = Task {
+            let result = await Task.detached(priority: .utility) {
+                MusicExtrasService.readUpcoming(currentTitle: title, currentArtist: artist)
+            }.value
+            guard !Task.isCancelled, pageVisible, upNextEnabled, nowPlaying.song.id == trackID else { return }
+            upcomingTracks = result
+            isLoadingUpcoming = false
+        }
+    }
+
+    private func loadLyrics() {
+        lyricsTask?.cancel()
+        guard pageVisible, lyricsEnabled, lyricsVisible, nowPlaying.song.hasTrack else {
+            lyricsContent = nil
+            isLoadingLyrics = false
+            return
+        }
+
+        let trackID = nowPlaying.song.id
+        let artist = nowPlaying.song.artist
+        let title = nowPlaying.song.title
+        let duration = nowPlaying.song.duration
+        let key = MusicExtrasService.lyricsCacheKey(artist: artist, title: title, duration: duration)
+        if let cached = MusicExtrasCache.lyrics(for: key) {
+            lyricsContent = cached
+            isLoadingLyrics = false
+            return
+        }
+
+        isLoadingLyrics = true
+        lyricsContent = nil
+        lyricsTask = Task {
+            let result = await MusicExtrasService.loadLyrics(artist: artist, title: title, duration: duration)
+            guard !Task.isCancelled, pageVisible, lyricsVisible, lyricsEnabled, nowPlaying.song.id == trackID else { return }
+            lyricsContent = result
+            isLoadingLyrics = false
+        }
     }
 
     private var emptyPlayer: some View {
@@ -230,6 +540,9 @@ struct IntegratedMusicView: View {
                     .background(NotchModule.nowPlaying.tint.opacity(0.18), in: Capsule())
             }
             .buttonStyle(.plain)
+            .frame(minHeight: 28)
+            .contentShape(Rectangle())
+            .help("Open Apple Music.")
             .accessibilityIdentifier("open-music")
         }
         .frame(maxHeight: .infinity, alignment: .center)
@@ -288,11 +601,12 @@ struct MusicIconButton: View {
             Image(systemName: symbol)
                 .font(.system(size: prominent ? 12 : 10, weight: .bold))
                 .contentTransition(.symbolEffect(.replace))
-                .frame(width: prominent ? 28 : 22, height: 22)
+                .frame(width: 28, height: 28)
                 .background(
                     prominent ? Color.white : (active ? activeTint.opacity(0.24) : .white.opacity(0.055)),
                     in: Circle()
                 )
+                .contentShape(Circle())
                 .foregroundStyle(
                     prominent ? .black : (active ? activeTint : .white.opacity(0.72))
                 )
@@ -307,6 +621,7 @@ struct MusicIconButton: View {
         .opacity(enabled ? 1 : 0.34)
         .help(label)
         .accessibilityLabel(label)
+        .accessibilityIdentifier("music-control-\(label.lowercased().replacingOccurrences(of: " ", with: "-"))")
     }
 }
 
@@ -374,4 +689,3 @@ struct TextWidthPreferenceKey: PreferenceKey {
         value = max(value, nextValue())
     }
 }
-
