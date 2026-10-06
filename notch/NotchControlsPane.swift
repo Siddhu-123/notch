@@ -121,6 +121,8 @@ struct CompactControlsPane: View {
             } else if !controls.isVolumeAvailable {
                 hintText(controls.audioControlsHint.isEmpty ? "Volume fixed • use device controls" : controls.audioControlsHint)
             }
+
+            SoundMixerSection()
         }
     }
 
