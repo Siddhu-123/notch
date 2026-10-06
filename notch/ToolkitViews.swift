@@ -43,7 +43,7 @@ enum NotchToolkitPage: String, CaseIterable, Identifiable {
         }
     }
     static var visible: [NotchToolkitPage] {
-        allCases.filter { $0 != .awake && ($0.feature.map { NotchFeatureRegistry.isEnabled($0) } ?? true) }
+        NotchPanelLayout.current.filter { $0 != .awake && ($0.feature.map { NotchFeatureRegistry.isEnabled($0) } ?? true) }
     }
 }
 
@@ -51,6 +51,7 @@ struct NotchToolkitView: View {
     let page: NotchToolkitPage
     @ObservedObject private var store = NotchToolkitStore.shared
     @State private var customAwakeMinutes = "45"
+    @State private var panelLayoutRevision = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -70,16 +71,18 @@ struct NotchToolkitView: View {
         }
         .foregroundStyle(.white)
         .onAppear { store.enabled = true }
+        .onReceive(NotificationCenter.default.publisher(for: NotchPanelLayout.changed)) { _ in panelLayoutRevision += 1 }
         .accessibilityIdentifier("toolkit-\(page.rawValue)-panel")
     }
 
     /// One row of large page buttons so every tool is one click from any other.
     private var pageStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        let _ = panelLayoutRevision
+        return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(NotchToolkitPage.visible) { item in
                     Button { NotchModel.shared.openTool(item) } label: {
-                        Label(item.title, systemImage: item.symbol)
+                        Label(item.localizedTitle, systemImage: item.symbol)
                             .font(.system(size: 12, weight: .semibold, design: .rounded))
                             .padding(.horizontal, 10)
                             .frame(minHeight: 28)
