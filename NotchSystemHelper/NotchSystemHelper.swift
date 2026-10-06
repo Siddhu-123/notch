@@ -182,8 +182,24 @@ private final class MediaRemoteBridge {
         return Paths(script: script, framework: framework)
     }
 
+    private static var didReapOrphans = false
+
+    /// A killed helper leaves its perl stream re-parented to launchd; reap those before starting a new one.
+    private static func reapOrphanedStreams() {
+        guard !didReapOrphans else { return }
+        didReapOrphans = true
+        let reaper = Process()
+        reaper.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        reaper.arguments = ["-P", "1", "-f", "mediaremote-adapter.pl .* stream"]
+        reaper.standardOutput = FileHandle.nullDevice
+        reaper.standardError = FileHandle.nullDevice
+        try? reaper.run()
+        reaper.waitUntilExit()
+    }
+
     private func ensureStream(paths: Paths) {
         guard process == nil else { return }
+        Self.reapOrphanedStreams()
         let process = Process()
         let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
