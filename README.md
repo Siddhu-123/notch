@@ -1,39 +1,76 @@
 # Notch
 
-Notch is a native macOS menu-bar utility inspired by [Boring Notch](https://github.com/TheBoredTeam/boring.notch). It turns the top-center notch area into a quiet, animated control surface.
+A native macOS menu-bar utility that turns the top-centre notch area into an animated control surface: music, calendar, a file shelf, system controls, a camera mirror and a growing set of local tools. Built with SwiftUI. Inspired by [Boring Notch](https://github.com/TheBoredTeam/boring.notch).
 
-## Included
+> Status: working prototype under active development. See [Known issues](#known-issues).
 
-- Hover-to-expand live activity panel with smooth spring transitions
-- Apple Music and Spotify now-playing metadata, artwork, transport controls, seeking, and volume
-- Calendar events and Reminders with native permission prompts
-- Persistent file Shelf with drag and drop, multi-select, Finder reveal, open, remove, and AirDrop
-- Private Mirror module with an on-demand camera preview and native privacy controls
-- Native volume, mute, display brightness, battery, charging, and compact HUD controls
-- Menu-bar controls, launch-at-login, pin-open mode, visibility, theme, module preferences, interaction modes, and panel sizing
-- Eight-band audio-reactive visualizer that measures system output in dB through Core Audio and never requests screen-recording or microphone access
-- Shelf sections for files, local clipboard history, pinned snippets, and bookmarked folders
-- Workspace views for a persistent focus timer, battery/audio dashboard with battery refresh, voice controls, Call tools, and live assistant activity
-- Quick-action pills, shared motion, camera-safe navigation, and optional pixel cat, festive lights, and file-drop paw
+## Features
 
-Home pairs music with calendar or your chosen accessory. When no track is active, Open Music launches Music; playback controls appear once a track is available. Shelf keeps Files, Clipboard, and Folders together. The grid button opens Workspace. Companions and effects are configurable in Settings and respect macOS Reduce Motion.
+- **Live activity panel**: hover to expand, spring transitions, pin-open mode, follows the display you are using.
+- **Music**: Apple Music and Spotify metadata, artwork, transport, seeking and volume; up-next, lyrics and media-key guard.
+- **Calendar and Reminders**: native permission prompts, requested only when you open the module.
+- **Shelf**: persistent file shelf with drag and drop, AirDrop, Finder reveal, text-only clipboard history (off by default), pinned snippets and bookmarked folders.
+- **Mirror**: on-demand camera preview with native privacy controls.
+- **System controls**: volume, mute, display brightness, battery, a per-app sound mixer with routing and a headphone guard.
+- **Audio visualiser**: eight-band spectrum from system output via a Core Audio process tap; no screen-recording or microphone access.
+- **Workspace**: focus timer, dashboard, voice commands (on-device recognition only), call tools and a live assistant-activity view for coding agents (see `AgentBridge/`).
+- **Tools**: window switcher and snapping, quit protection, pointer tweaks, Caps Lock Hyper key, command bar with safe math, radial menu, cleaning mode, capture and watch region, media conversion, and a maintenance suite (cleanup, leftovers, duplicates, login items).
+- **Utilities**: scratchpad, clean URL, keep awake and a system monitor. Twelve interface languages.
 
-Clipboard monitoring starts off, remembers your choice across restarts, and keeps text only on this Mac. It skips concealed and transient clipboard items and retains pinned snippets when history is cleared. The folder browser lists only immediate contents of folders you choose and restores your selected bookmarked folder after restart.
+## Requirements
 
-Voice starts only when you press Start and requires on-device recognition for your language. Approved permissions are reused; an unanswered startup stops after one minute and allows retry. Press Finish after speaking; commands run strictly from final recognition matching known commands. Leaving the view, hiding, or closing the notch cancels recording. A new recording clears the prior transcript once capture begins. Media commands report when no track is active. Transcripts stay in memory unless you explicitly copy or save them. Examples: “play music”, “open shelf”, and “start focus for 25 minutes”.
+- macOS 15.5 or later
+- Xcode 16 or later
 
-Focus keeps presets available while idle and displays the actual session duration while running or paused.
+## Build and run
 
-Dashboard shows battery, audio, and agent status with a manual battery refresh. Accessory levels appear only when macOS exposes them. Call tools lists installed FaceTime, Teams, and Zoom apps, opens the selected app, and offers system microphone mute when supported. App availability and microphone state refresh while this view is open. Answering, ending, and muting individual calls stay in the call app; output mute stays in Controls. Assistant shows connected agents’ real states and step counts.
+```bash
+git clone https://github.com/Siddhu-123/notch.git
+cd notch
+open notch.xcodeproj
+```
 
-## Run
+Run the `notch` scheme. From the command line:
 
-Open `notch.xcodeproj` in Xcode 16 or later and run the `notch` scheme on macOS 15.5 or later. The app runs as an accessory with a menu-bar item and a borderless panel at the top of the active display.
+```bash
+xcodebuild -project notch.xcodeproj -scheme notch -configuration Debug build
+```
 
-The first use of Music or Spotify controls may ask for Automation permission. Calendar and Reminders access is requested only when those modules are opened or enabled. The visualizer reads system output through a private Core Audio process tap; it does not request screen-recording or microphone access.
+If you have several Xcode versions installed, point `DEVELOPER_DIR` at the one you want, for example `DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer`. The project's signing team belongs to the author; change it under Signing & Capabilities, or build with `CODE_SIGNING_ALLOWED=NO`.
 
+`create_dmg.sh` packages a Release build into a `.dmg`.
 
-## Sketch layout and local tools
+The app runs as an accessory with a menu-bar item and a borderless panel at the top of the active display. The first use of Music or Spotify controls may ask for Automation permission. Some tools use the bundled `NotchSystemHelper` XPC service.
+
+## Privacy
+
+Clipboard monitoring is off until you enable it, keeps text only on this Mac and skips concealed and transient items. Voice recognition is on-device and starts only when you press Start; transcripts stay in memory unless you copy or save them. The bundled utilities need no network access.
+
+## Known issues
+
+- Layout recursion warnings (`layoutSubtreeIfNeeded`) and occasional negative view-size warnings are still reproducible in Release builds.
+- Moving the panel between two physical displays has not been fully confirmed.
+- Fullscreen detection is a conservative window-based heuristic, not a direct Spaces query.
+- A file-URL sandbox extension error (`-20`) appears in some drag-and-drop logs; the exact trigger is unknown.
+- Several upstream features are not implemented (see the feature list above for what is).
+
+## Repository layout
+
+| Path | Contents |
+| :--- | :--- |
+| `notch/` | App source (SwiftUI); `Wave7/` holds the feature modules |
+| `NotchSystemHelper/` | XPC helper for privileged and background features |
+| `AgentBridge/` | Scripts that report coding-agent activity to the panel |
+| `Vendor/` | MediaRemoteAdapter framework and third-party licences |
+| `notchTests/`, `notchUITests/` | Unit and UI tests |
+
+## Licence
+
+GPL-3.0-or-later. See [LICENSE](LICENSE). Parts of the utilities are adapted from Vorssaint (GPL-3.0-or-later) and the music bridge uses MediaRemoteAdapter (BSD-3-Clause); full notices are in [Vendor/THIRD_PARTY_LICENSES.md](Vendor/THIRD_PARTY_LICENSES.md).
+
+---
+
+## Design notes: sketch layout and local tools
 
 The expanded Island follows the hand sketch: one continuous frame, three joined
 rectangular tiles on each side, nine along the base, diagonal corner joints,
